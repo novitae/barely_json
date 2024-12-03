@@ -3,9 +3,16 @@
 '''
 A very forgiving JSON parser.
 '''
-
+import sys
 import codecs
 import re
+import inspect
+
+if sys.version_info >= (3, 8):
+    from typing import Literal
+    _source = Literal["list_value", "dict_key", "dict_value", None]
+else:
+    _source = str
 
 from pyparsing import *
 
@@ -131,7 +138,7 @@ value << (dict_ | list_ | float_ | int_ | string_ |
           null | true | false | illegal)
 
 
-def default_resolver(value):
+def default_resolver(value, source: _source = None):
     '''
     Default resolver for illegal values.
 
@@ -163,7 +170,13 @@ def default_resolver(value):
     return decode_escapes(value)
 
 
-def resolve(data, resolver=default_resolver):
+def resolve(
+    data,
+    resolver=default_resolver,
+    *,
+    supports_source: bool = None,
+    source: _source = None,
+):
     '''
     Recursively resolve illegal values.
 
@@ -175,12 +188,37 @@ def resolve(data, resolver=default_resolver):
     All instances of ``IllegalValue`` in ``data`` are replaced by the
     result of feeding them into ``resolver``.
     '''
+    if supports_source is None:
+        args_spec = inspect.getfullargspec(resolver)
+        supports_source = 'source' in (*args_spec.args, *args_spec.kwonlyargs)
     if isinstance(data, list):
-        return [resolve(item, resolver) for item in data]
+        return [
+            resolve(
+                data=item,
+                resolver=resolver,
+                supports_source=supports_source,
+                source="list_value",
+            ) for item in data
+        ]
     if isinstance(data, dict):
-        return {resolve(key, resolver): resolve(value, resolver) for key, value in data.items()}
+        return {
+            resolve(
+                data=key,
+                resolver=resolver,
+                supports_source=supports_source,
+                source="dict_key",
+            ): resolve(
+                data=value,
+                resolver=resolver,
+                supports_source=supports_source,
+                source="dict_value",
+            ) for key, value in data.items()
+        }
     if isinstance(data, IllegalValue):
-        return resolver(data.source)
+        args = [data.source]
+        if supports_source is True:
+            args.append(source)
+        return resolver(*args)
     return data
 
 
